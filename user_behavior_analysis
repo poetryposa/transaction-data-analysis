@@ -1,0 +1,250 @@
+-- ========================================
+-- Transaction Data Analysis - SQL Queries
+-- ========================================
+
+-- 1. Data Quality Checks
+-- ----------------------
+
+-- Check uniqueness of IDs in each table
+SELECT 'users_data' AS tbl, COUNT(*) total, COUNT(DISTINCT id) distinct_id 
+FROM user_behavior.users_data
+UNION ALL
+SELECT 'cards_data', COUNT(*), COUNT(DISTINCT id) 
+FROM user_behavior.cards_data
+UNION ALL
+SELECT 'transaction_data', COUNT(*), COUNT(DISTINCT id) 
+FROM user_behavior.transaction_data;
+
+-- Validate if all client_id in transactions exist in users_data
+SELECT
+  COUNT(*) AS tx_rows,
+  COUNTIF(u.id IS NOT NULL) AS with_user,
+  COUNTIF(u.id IS NULL)     AS without_user
+FROM user_behavior.transaction_data t
+LEFT JOIN user_behavior.users_data u
+  ON t.client_id = u.id;
+
+-- Validate date column (check bad dates, min, max)
+SELECT
+  COUNT(*) AS tx_rows,
+  COUNTIF(SAFE_CAST(date AS DATE) IS NULL) AS bad_date_rows,
+  MIN(SAFE_CAST(date AS DATE)) AS min_tx_date,
+  MAX(SAFE_CAST(date AS DATE)) AS max_tx_date
+FROM user_behavior.transaction_data;
+
+
+-- 2. View Creation (Cleaned Tables)
+-- ---------------------------------
+
+-- Cleaned Users View
+CREATE OR REPLACE VIEW user_behavior.v_users AS
+SELECT
+  id AS client_id,
+  current_age,
+  retirement_age,
+  gender,
+  yearly_income,
+  total_debt,
+  credit_score,
+  credit_band,
+  dti_ratio,
+  num_credit_cards
+FROM user_behavior.users_data;
+
+-- Cleaned Cards View
+CREATE OR REPLACE VIEW user_behavior.v_cards AS
+SELECT
+  id AS card_id,
+  client_id,
+  card_brand,
+  card_type,
+  credit_limit,
+  card_on_dark_web,
+  SAFE_CAST(acct_open_date AS DATE) AS acct_open_date
+FROM user_behavior.cards_data;
+
+-- Cleaned Transactions View
+CREATE OR REPLACE VIEW user_behavior.v_transactions AS
+SELECT
+  id AS tx_id,
+  SAFE_CAST(date AS DATE) AS tx_date,
+  DATE_TRUNC(SAFE_CAST(date AS DATE), MONTH) AS tx_month,
+  client_id,
+  card_id,
+  SAFE_CAST(REGEXP_REPLACE(amount, r'[^0-9.]', '') AS NUMERIC) AS amount, -- ensure numeric
+  CAST(use_chip AS BOOL) AS use_chip,
+  merchant_id,
+  merchant_city,
+  merchant_state,
+  zip,
+  mcc
+FROM user_behavior.transaction_data;
+
+
+-- 3. User Analysis
+-- ----------------
+
+-- Avg income, debt, credit score by gender
+SELECT
+  gender,
+  ROUND(AVG(yearly_income),2) AS avg_income,
+  ROUND(AVG(total_debt),2)    AS avg_debt,
+  ROUND(AVG(credit_score),2)  AS avg_credit_score,
+  ROUND(AVG(dti_ratio),4)     AS avg_dti
+FROM user_behavior.v_users
+GROUP BY gender
+ORDER BY gender;
+
+-- Distribution by credit band
+SELECT
+  credit_band,
+  COUNT(*) AS users,
+  ROUND(AVG(yearly_income),2) AS avg_income,
+  ROUND(AVG(credit_score),2)  AS avg_score
+FROM user_behavior.v_users
+GROUP BY credit_band
+ORDER BY users DESC;
+
+
+-- 4. Card Analysis
+-- ----------------
+
+-- Card brand x type distribution
+SELECT
+  card_brand,
+  card_type,
+  COUNT(*) AS total_cards,
+  ROUND(AVG(credit_limit),2) AS avg_limit
+FROM user_behavior.v_cards
+GROUP BY card_brand, card_type
+ORDER BY total_cards DESC;
+
+-- Proportion of cards flagged in dark web
+SELECT
+  COUNTIF(card_on_dark_web) AS darkweb_cards,
+  COUNT(*) AS total_cards,
+  ROUND(100 * COUNTIF(card_on_dark_web) / COUNT(*), 2) AS pct_darkweb
+FROM user_behavior.v_cards;
+
+
+-- 5. Transaction Analysis
+-- -----------------------
+
+-- Monthly transaction trend
+SELECT
+  tx_month,
+  COUNT(*) AS total_tx,
+  ROUND(SUM(amount),2) AS total_amount,
+  ROUND(AVG(amount),2) AS avg_amount
+FROM user_behavior.v_transactions
+GROUP BY tx_month
+ORDER BY tx_month;
+
+-- Top 10 Merchant Categories (MCC)
+SELECT
+  mcc,
+  COUNT(*) AS num_tx,
+  ROUND(SUM(amount),2) AS total_spent,
+  ROUND(AVG(amount),2) AS avg_spent
+FROM user_behavior.v_transactions
+GROUP BY mcc
+ORDER BY total_spent DESC
+LIMIT 10;
+
+-- Chip vs Non-chip usage
+SELECT
+  use_chip,
+  COUNT(*) AS num_tx,
+  ROUND(SUM(amount),2) AS total_spent
+FROM user_behavior.v_transactions
+GROUP BY use_chip
+ORDER BY total_spent DESC;
+
+-- Spend per credit band
+SELECT
+  u.credit_band,
+  COUNT(DISTINCT u.client_id) AS users,
+  COUNT(t.tx_id) AS total_tx,
+  ROUND(SUM(t.amount),2) AS total_spent,
+  ROUND(AVG(t.amount),2) AS avg_tx_value
+FROM user_behavior.v_users u
+JOIN user_behavior.v_transactions t
+  ON u.client_id = t.client_id
+GROUP BY u.credit_band
+ORDER BY total_spent DESC;
+
+-- Spend per card brand/type
+SELECT
+  c.card_brand,
+  c.card_type,
+  COUNT(t.tx_id) AS total_tx,
+  ROUND(SUM(t.amount),2) AS total_spent,
+  ROUND(AVG(t.amount),2) AS avg_tx_value
+FROM user_behavior.v_cards c
+JOIN user_behavior.v_transactions t
+  ON c.card_id = t.card_id
+GROUP BY c.card_brand, c.card_type
+ORDER BY total_spent DESC;
+
+
+-- 6. Client-Level Analysis
+-- ------------------------
+
+-- Top 10 clients by total spend
+SELECT
+  u.client_id,
+  u.credit_band,
+  u.num_credit_cards,
+  ROUND(u.yearly_income,2) AS yearly_income,
+  ROUND(SUM(t.amount),2) AS total_spent,
+  COUNT(t.tx_id) AS total_tx
+FROM user_behavior.v_users u
+JOIN user_behavior.v_transactions t
+  ON u.client_id = t.client_id
+GROUP BY u.client_id, u.credit_band, u.num_credit_cards, u.yearly_income
+ORDER BY total_spent DESC
+LIMIT 10;
+
+-- Transactions using dark web–flagged cards
+SELECT
+  c.card_id,
+  c.card_brand,
+  c.card_type,
+  COUNT(t.tx_id) AS total_tx,
+  ROUND(SUM(t.amount),2) AS total_spent
+FROM user_behavior.v_cards c
+JOIN user_behavior.v_transactions t
+  ON c.card_id = t.card_id
+WHERE c.card_on_dark_web = TRUE
+GROUP BY c.card_id, c.card_brand, c.card_type
+ORDER BY total_spent DESC;
+
+-- Potential anomalies: transactions exceeding credit limit
+SELECT
+  t.tx_id, t.tx_date, t.client_id, t.card_id, t.amount, c.credit_limit
+FROM user_behavior.v_transactions t
+JOIN user_behavior.v_cards c
+  ON t.card_id = c.card_id
+WHERE t.amount > c.credit_limit
+ORDER BY t.amount DESC
+LIMIT 50;
+
+
+-- 7. Materialized Views (Reusable Result Sets)
+-- --------------------------------------------
+
+CREATE OR REPLACE VIEW user_behavior.rs_monthly_trend AS
+SELECT
+  tx_month,
+  COUNT(*) AS total_tx,
+  ROUND(SUM(amount),2) AS total_amount
+FROM user_behavior.v_transactions
+GROUP BY tx_month;
+
+CREATE OR REPLACE VIEW user_behavior.rs_top_mcc AS
+SELECT
+  mcc,
+  COUNT(*) AS num_tx,
+  ROUND(SUM(amount),2) AS total_spent
+FROM user_behavior.v_transactions
+GROUP BY mcc;
