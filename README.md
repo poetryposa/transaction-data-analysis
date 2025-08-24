@@ -1,4 +1,9 @@
 📑 SQL Query Summary
+
+Live Dashboard
+You can explore the interactive dashboard here:  
+[Customer Transaction & Card Usage Dashboard]([https://lookerstudio.google.com/xxxxxx](https://lookerstudio.google.com/reporting/72dfa2eb-40d6-41d8-ba38-6d010eefa960))
+
 1. Data Quality Checks
 - Check uniqueness of IDs across tables (users_data, cards_data, transaction_data).
 - Validate whether all client_id in transactions exist in users_data.
@@ -29,3 +34,10 @@
 - Top 10 clients by total spending, with profile summary (income, credit band, number of cards).
 - Transactions made with dark web–flagged cards.
 - Potential anomalies: transactions greater than card credit limit.
+
+
+## Notes on Dataset
+For this project, I used a **sample of 3,000 rows** extracted from the original dataset (~1GB).  
+Due to the reduced sample size, some visualizations such as **monthly or long-term transaction trends** may appear limited.  
+The purpose of this dashboard is to **demonstrate analytical skills, data visualization, and storytelling**, rather than to fully represent the complete dataset.
+
